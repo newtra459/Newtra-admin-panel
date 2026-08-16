@@ -522,23 +522,19 @@ export default function VehiclesPage() {
       }
     }
 
-    if (usingApi && nextRows.length === 1) {
+    if (usingApi) {
       try {
-        const created = await createVehicle(nextRows[0]);
-        // createVehicle now returns a mapped VehicleRow (or null); fall back to
-        // the locally-built row so we never inject the raw API envelope (which
-        // has no .type and crashed the fleet-card render).
-        const localDraft = nextRows[0];
-        const mergedCreated = created ? mergeRemoteWithLocalVehicle(created, localDraft) : localDraft;
-        setRows((prev) => [...prev, mergedCreated]);
+        const createdRows = await Promise.all(nextRows.map(async (localDraft) => {
+          const created = await createVehicle(localDraft);
+          return created ? mergeRemoteWithLocalVehicle(created, localDraft) : localDraft;
+        }));
+        setRows((prev) => [...prev, ...createdRows]);
+        setVehiclesMode('API');
       } catch (error) {
-        reportVehiclesApiError('Create vehicle', error);
+        reportVehiclesApiError(nextRows.length > 1 ? 'Bulk create vehicles' : 'Create vehicle', error);
         return;
       }
     } else {
-      if (usingApi && nextRows.length > 1) {
-        setVehiclesSyncError('Bulk create currently runs in local mode for safety. You can still upload/import and sync progressively.');
-      }
       setRows((prev) => [...prev, ...nextRows]);
     }
 
@@ -857,7 +853,7 @@ export default function VehiclesPage() {
       try {
         const remoteRows = await listVehicles({ page: 1, limit: 500 });
         if (!mounted) return;
-        if (Array.isArray(remoteRows) && remoteRows.length) {
+        if (Array.isArray(remoteRows)) {
           const localRows = loadFleetRows(SEED);
           const localById = localRows.reduce((acc, row) => {
             if (row?.id) acc[row.id] = row;
