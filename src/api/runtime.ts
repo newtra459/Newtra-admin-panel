@@ -12,11 +12,15 @@ export function getApiBaseUrl(): string {
   const raw = String(import.meta.env.VITE_API_BASE_URL || '').trim();
   if (!raw) return '';
 
-  // On localhost, prefer relative /v1 routes so the local server proxy can
-  // forward requests to backend without browser CORS failures.
+  // Prefer relative /v1 routes on local + hosted web frontends where the
+  // platform proxy can forward to backend, avoiding browser CORS failures.
   if (typeof window !== 'undefined') {
     const host = String(window.location.hostname || '').toLowerCase();
-    if (host === 'localhost' || host === '127.0.0.1') {
+    const shouldUseRelative = host === 'localhost'
+      || host === '127.0.0.1'
+      || host === 'admin.newtra.in'
+      || host.endsWith('.vercel.app');
+    if (shouldUseRelative) {
       return '';
     }
   }
