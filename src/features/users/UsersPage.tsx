@@ -20,6 +20,10 @@ function loadHiddenUserIds(): Set<string> {
 function saveHiddenUserId(id: string): void {
   try { const s = loadHiddenUserIds(); s.add(id); localStorage.setItem(HIDDEN_USERS_KEY, JSON.stringify([...s])); } catch {}
 }
+function isBlockedUserStatus(value: unknown): boolean {
+  const raw = String(value || '').trim().toLowerCase();
+  return raw === 'blocked' || raw === 'inactive';
+}
 
 const SEED = [];
 
@@ -154,9 +158,16 @@ export default function UsersPage() {
       try {
         const remoteRows = await listUsers({ page: 1, limit: 200 });
         if (!mounted) return;
-        if (Array.isArray(remoteRows) && remoteRows.length) {
-           const hiddenIds = loadHiddenUserIds();
-           setUsers(remoteRows.filter((u) => !hiddenIds.has(String(u.id || u.apiId || ''))));
+        if (Array.isArray(remoteRows)) {
+          const hiddenIds = loadHiddenUserIds();
+          setUsers(remoteRows.filter((u) => {
+            const userId = String(u.id || u.apiId || '');
+            const blocked = isBlockedUserStatus(u.status);
+            if (blocked && userId) {
+              saveHiddenUserId(userId);
+            }
+            return !hiddenIds.has(userId) && !blocked;
+          }));
           setUsersMode('API');
         } else {
           setUsersMode('Local');
