@@ -284,9 +284,15 @@ export default function VehiclesPage() {
   };
 
   const f = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
-  const setStopScopeIdsFromEvent = (event) => {
-    const selectedScopeIds = Array.from(event.target.selectedOptions || []).map((option) => option.value);
-    setForm((prev) => ({ ...prev, stopScopeIds: uniqueStrings(selectedScopeIds) }));
+  const toggleStopScopeId = (scopeId, checked) => {
+    setForm((prev) => {
+      const current = uniqueStrings(prev.stopScopeIds || []);
+      if (checked) {
+        if (current.includes(scopeId)) return prev;
+        return { ...prev, stopScopeIds: [...current, scopeId] };
+      }
+      return { ...prev, stopScopeIds: current.filter((id) => id !== scopeId) };
+    });
   };
   const toggleAll = (checked) => setSelected(checked ? visible.map((r) => r.id) : []);
   const toggleRow = (id, checked) => setSelected((prev) => (checked ? [...prev, id] : prev.filter((x) => x !== id)));
@@ -1100,20 +1106,24 @@ export default function VehiclesPage() {
           {isBuggyType(form.type) && (
             <div className="form-field full">
               <label>Route Stops (Station Locations)</label>
-              <select
-                className="setting-input"
-                multiple
-                size={Math.min(Math.max(stationOptions.length, 3), 8)}
-                value={form.stopScopeIds || []}
-                onChange={setStopScopeIdsFromEvent}
-              >
-                {stationOptions.map((station) => (
-                  <option key={station.scopeId} value={station.scopeId}>
-                    {station.stationName} - {station.locationName}
-                  </option>
-                ))}
-              </select>
-              <small className="text-[11px] text-slate-400">For buggy routes, select one or more stations. Hold Ctrl/Cmd to select multiple stops.</small>
+              <div className="rounded-lg border border-slate-700/80 bg-slate-950/30 p-3">
+                <div className="mb-2 text-[11px] text-slate-400">Select one or more stops for this buggy route.</div>
+                <div className="max-h-44 overflow-auto space-y-2 pr-1">
+                  {stationOptions.length ? stationOptions.map((station) => {
+                    const checked = (form.stopScopeIds || []).includes(station.scopeId);
+                    return (
+                      <label key={station.scopeId} className="flex items-center gap-2 text-[12px] text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => toggleStopScopeId(station.scopeId, event.target.checked)}
+                        />
+                        <span>{station.stationName} - {station.locationName}</span>
+                      </label>
+                    );
+                  }) : <div className="text-[12px] text-slate-400">No station locations available. Add stations in Locations first.</div>}
+                </div>
+              </div>
             </div>
           )}
           <div className="form-field"><label>Status</label>
