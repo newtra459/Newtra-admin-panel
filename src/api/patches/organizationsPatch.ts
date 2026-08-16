@@ -38,15 +38,23 @@ export const ORGANIZATIONS_PATCH = {
   },
 
   toPayload(org: Partial<OrganizationRow>): Record<string, unknown> {
-    return {
-      id: org.apiId || org.id || undefined,
-      name: org.name,
-      description: org.description || '',
-      city: org.city || '',
-      logo: org.logo || '',
-      banner: org.banner || '',
-      type: org.type || 'general',
-      is_active: org.status !== 'Inactive',
+    const result: Record<string, unknown> = {
+      name: (org as Record<string, unknown>).name || (org as Record<string, unknown>).organization_name || '',
+      description: (org as Record<string, unknown>).description || (org as Record<string, unknown>).address || '',
+      city: (org as Record<string, unknown>).city || '',
+      logo: (org as Record<string, unknown>).logo || '',
+      banner: (org as Record<string, unknown>).banner || '',
+      type: (org as Record<string, unknown>).type || (org as Record<string, unknown>).businessType || 'general',
+      is_active: (org as Record<string, unknown>).status !== 'Inactive',
     };
+    const state = (org as Record<string, unknown>).state;
+    if (state) result.state = state;
+    const email = (org as Record<string, unknown>).contactEmail || (org as Record<string, unknown>).contact_email;
+    if (email) result.contact_email = email;
+    const phone = (org as Record<string, unknown>).contactPhone || (org as Record<string, unknown>).contact_phone;
+    if (phone) result.contact_phone = phone;
+    const apiId = (org as Record<string, unknown>).apiId || (org as Record<string, unknown>).id;
+    if (apiId) result.id = apiId;
+    return result;
   },
 };

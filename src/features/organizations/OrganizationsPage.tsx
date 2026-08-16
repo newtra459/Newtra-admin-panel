@@ -915,43 +915,52 @@ export default function OrganizationsPage() {
   const prevStep = () => setWizardStep((prev) => Math.max(prev - 1, 0));
 
   const finalizeCreateOrganization = async () => {
-    if (!draftOrg.name.trim() || !draftOrg.businessTypeId || !draftOrg.organizationTypeId || !draftOrg.stateLocationId || !draftOrg.cityLocationId) return;
-    const selectedOrgType = activeOrganizationTypeOptions.find((item) => item.id === draftOrg.organizationTypeId) || null;
-    if (!selectedOrgType || !doesOrgTypeScopeMatch(selectedOrgType.locationId, draftOrg.stateLocationId, draftOrg.cityLocationId)) {
-      window.alert('Selected Organization Type is outside the chosen location scope. Choose a location-matching organization type.');
+    if (!draftOrg.name.trim()) {
+      window.alert('Organization name is required.');
       return;
     }
 
-    if (usingApi) {
-      try {
-        const createdRaw = await createOrganizationApi({
-          organization_name: draftOrg.name,
-          business_type_id: draftOrg.businessTypeId,
-          organization_type_id: draftOrg.organizationTypeId,
-          address: draftOrg.address,
-          state: draftOrg.state,
-          city: draftOrg.city,
-          zip_code: draftOrg.zipCode,
-          contact_email: draftOrg.contactEmail,
-          contact_phone: draftOrg.contactPhone,
-          status: String(draftOrg.status || 'Active').toLowerCase(),
-        });
-        const created = mapApiOrganization(createdRaw, orgSettings, businessSetup);
-        setOrganizations((prev) => [...prev, created]);
-        setShowCreate(false);
-        setDetailOrgId(created.id);
-        setDetailTab('dashboard');
-        return;
-      } catch (error) {
-        reportOrganizationsApiError('Create organization', error);
+    if (!usingApi) {
+      // Local mode: require full hierarchy selection.
+      if (!draftOrg.businessTypeId || !draftOrg.organizationTypeId || !draftOrg.stateLocationId || !draftOrg.cityLocationId) {
+        window.alert('Please select Business Type, Organization Type, State and City before saving.');
         return;
       }
+      const selectedOrgTypeLocal = activeOrganizationTypeOptions.find((item) => item.id === draftOrg.organizationTypeId) || null;
+      if (!selectedOrgTypeLocal || !doesOrgTypeScopeMatch(selectedOrgTypeLocal.locationId, draftOrg.stateLocationId, draftOrg.cityLocationId)) {
+        window.alert('Selected Organization Type is outside the chosen location scope. Choose a location-matching organization type.');
+        return;
+      }
+      setOrganizations((prev) => [...prev, cloneOrganization(draftOrg)]);
+      setShowCreate(false);
+      setDetailOrgId(draftOrg.id);
+      setDetailTab('dashboard');
+      return;
     }
 
-    setOrganizations((prev) => [...prev, cloneOrganization(draftOrg)]);
-    setShowCreate(false);
-    setDetailOrgId(draftOrg.id);
-    setDetailTab('dashboard');
+    // API mode: send to backend, only require name.
+    try {
+      const envelope = await createOrganizationApi(draftOrg);
+      // Backend returns { success, data: { id, name, ... }, message }
+      const rawOrg = (envelope && typeof envelope === 'object' && 'data' in envelope)
+        ? (envelope as Record<string, unknown>).data
+        : envelope;
+      // Merge API response with draft so all locally-filled fields are preserved.
+      const mergedRaw = { ...draftOrg, ...(rawOrg && typeof rawOrg === 'object' ? rawOrg : {}) };
+      const created = mapApiOrganization(mergedRaw, orgSettings, businessSetup);
+      // Preserve fields that mapApiOrganization doesn't carry over from the full draft.
+      const finalOrg: typeof draftOrg = {
+        ...cloneOrganization(draftOrg),
+        id: created.id || draftOrg.id,
+        status: created.status || draftOrg.status,
+      };
+      setOrganizations((prev) => [...prev, finalOrg]);
+      setShowCreate(false);
+      setDetailOrgId(finalOrg.id);
+      setDetailTab('dashboard');
+    } catch (error) {
+      reportOrganizationsApiError('Create organization', error);
+    }
   };
 
   const assignMappedPlans = [
