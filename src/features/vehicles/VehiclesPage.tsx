@@ -41,7 +41,63 @@ const COLUMNS = [
 ];
 
 function blank(defaultType = '') {
-  return { type: defaultType, mode: 'single', prefix: 'VH-', count: 1, biz: '', org: '', location: 'Unassigned', status: 'Active', locked: 'unlocked', driverId: '', seats: 1 };
+  return {
+    type: defaultType,
+    mode: 'single',
+    prefix: 'VH-',
+    count: 1,
+    biz: '',
+    org: '',
+    location: 'Unassigned',
+    status: 'Active',
+    locked: 'unlocked',
+    driverId: '',
+    seats: 1,
+    stopScopeIds: [],
+  };
+}
+
+function isBuggyType(type = '') {
+  return /buggy/i.test(String(type));
+}
+
+function uniqueStrings(values = []) {
+  const out = [];
+  const seen = new Set();
+  values.forEach((value) => {
+    const next = String(value || '').trim();
+    if (!next || seen.has(next)) return;
+    seen.add(next);
+    out.push(next);
+  });
+  return out;
+}
+
+function buildStationStops(scopeIds = [], stationOptions = []) {
+  const byScopeId = stationOptions.reduce((acc, item) => {
+    acc[item.scopeId] = item;
+    return acc;
+  }, {});
+
+  return uniqueStrings(scopeIds)
+    .map((scopeId) => {
+      const station = byScopeId[scopeId];
+      if (!station) return null;
+      return {
+        scopeId,
+        locationName: station.locationName,
+        stationName: station.stationName,
+        locationPin: station.locationPin || '',
+      };
+    })
+    .filter(Boolean);
+}
+
+function summarizeStops(row) {
+  const stops = Array.isArray(row?.stationStops) ? row.stationStops : [];
+  if (!stops.length) return row?.location || 'Unassigned';
+  if (stops.length === 1) return `${stops[0].stationName} (${stops[0].locationName})`;
+  return `${stops.length} stops • ${stops.map((stop) => stop.stationName).join(' -> ')}`;
 }
 
 function getVehicleTypeCatalog(businessSetup, rows = []) {
@@ -228,6 +284,10 @@ export default function VehiclesPage() {
   };
 
   const f = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
+  const setStopScopeIdsFromEvent = (event) => {
+    const selectedScopeIds = Array.from(event.target.selectedOptions || []).map((option) => option.value);
+    setForm((prev) => ({ ...prev, stopScopeIds: uniqueStrings(selectedScopeIds) }));
+  };
   const toggleAll = (checked) => setSelected(checked ? visible.map((r) => r.id) : []);
   const toggleRow = (id, checked) => setSelected((prev) => (checked ? [...prev, id] : prev.filter((x) => x !== id)));
 
@@ -285,6 +345,9 @@ export default function VehiclesPage() {
       status: row.status,
       locked: row.locked ? 'locked' : 'unlocked',
       driverId: driverByVehicleId[row.id] || '',
+      stopScopeIds: Array.isArray(row.stationStopScopeIds)
+        ? uniqueStrings(row.stationStopScopeIds)
+        : uniqueStrings((Array.isArray(row.stationStops) ? row.stationStops : []).map((stop) => stop.scopeId)),
     });
     setShowAdd(true);
   };
@@ -296,11 +359,21 @@ export default function VehiclesPage() {
     }
 
     if (editingVehicleId) {
-      const nextLocation = form.location || 'Unassigned';
-      const nextLocationPin = resolveLocationPin(nextLocation);
       const editedMeta = vehicleTypeCatalog[form.type] || { driverApplicable: false };
       const maxSeats = Math.max(1, Number(editedMeta.seatCount) || 1);
       const nextSeats = Math.min(maxSeats, Math.max(1, Number(form.seats) || maxSeats));
+      const hasBuggyRoute = isBuggyType(form.type);
+      const stationStopScopeIds = hasBuggyRoute ? uniqueStrings(form.stopScopeIds || []) : [];
+      const stationStops = hasBuggyRoute ? buildStationStops(stationStopScopeIds, stationOptions) : [];
+
+      if (hasBuggyRoute && !stationStops.length) {
+        window.alert('Select at least one station stop for buggy routes.');
+        return;
+      }
+
+      const fallbackLocation = form.location || 'Unassigned';
+      const nextLocation = stationStops[0]?.locationName || fallbackLocation;
+      const nextLocationPin = stationStops[0]?.locationPin || resolveLocationPin(nextLocation);
 
       if (editedMeta.driverApplicable && form.driverId) {
         const assignedVehicleId = getAssignedVehicleIdForDriver(vehicleDriverRows, form.driverId);
@@ -326,6 +399,8 @@ export default function VehiclesPage() {
         status: form.status,
         locked: form.locked === 'locked',
         seats: nextSeats,
+        stationStopScopeIds,
+        stationStops,
         qr: existingRow.qr || '',
       };
 
@@ -368,8 +443,18 @@ export default function VehiclesPage() {
     const nextMeta = vehicleTypeCatalog[form.type] || { seatCount: 1, driverApplicable: false };
     const maxSeats = Math.max(1, Number(nextMeta.seatCount) || 1);
     const nextSeats = Math.min(maxSeats, Math.max(1, Number(form.seats) || maxSeats));
-    const nextLocation = form.location || 'Unassigned';
-    const nextLocationPin = resolveLocationPin(nextLocation);
+    const hasBuggyRoute = isBuggyType(form.type);
+    const stationStopScopeIds = hasBuggyRoute ? uniqueStrings(form.stopScopeIds || []) : [];
+    const stationStops = hasBuggyRoute ? buildStationStops(stationStopScopeIds, stationOptions) : [];
+
+    if (hasBuggyRoute && !stationStops.length) {
+      window.alert('Select at least one station stop for buggy routes.');
+      return;
+    }
+
+    const fallbackLocation = form.location || 'Unassigned';
+    const nextLocation = stationStops[0]?.locationName || fallbackLocation;
+    const nextLocationPin = stationStops[0]?.locationPin || resolveLocationPin(nextLocation);
 
     const nextRows = Array.from({ length: count }, (_, i) => ({
       id: `${form.prefix}${String(nextVehicleSequence + i).padStart(3, '0')}`,
@@ -381,6 +466,8 @@ export default function VehiclesPage() {
       org: form.org || 'Global Pool',
       location: nextLocation,
       locationPin: nextLocationPin,
+      stationStopScopeIds,
+      stationStops,
       status: form.status,
       locked: form.locked === 'locked',
     }));
@@ -779,26 +866,29 @@ export default function VehiclesPage() {
       ...prev,
       location: locationOptions.includes(prev.location) ? prev.location : 'Unassigned',
       org: prev.org && organizationOptions.includes(prev.org) ? prev.org : '',
+      stopScopeIds: uniqueStrings(prev.stopScopeIds || []).filter((scopeId) => stationOptions.some((option) => option.scopeId === scopeId)),
     }));
     setAllocationForm((prev) => ({
       ...prev,
       location: locationOptions.includes(prev.location) ? prev.location : 'Unassigned',
       org: prev.org && organizationOptions.includes(prev.org) ? prev.org : '',
     }));
-  }, [locationOptions, organizationOptions]);
+  }, [locationOptions, organizationOptions, stationOptions]);
 
   useEffect(() => {
     setForm((prev) => {
       if (!vehicleTypeOptions.includes(prev.type)) {
         const fallbackType = vehicleTypeOptions[0] || '';
         const fallbackSeats = Math.max(1, Number(vehicleTypeCatalog[fallbackType]?.seatCount) || 1);
-        return { ...blank(fallbackType), mode: prev.mode, seats: fallbackSeats };
+        return { ...blank(fallbackType), mode: prev.mode, seats: fallbackSeats, stopScopeIds: [] };
       }
       const maxSeats = Math.max(1, Number(vehicleTypeCatalog[prev.type]?.seatCount) || 1);
       const boundedSeats = Math.min(maxSeats, Math.max(1, Number(prev.seats) || maxSeats));
-      return boundedSeats === Number(prev.seats) ? prev : { ...prev, seats: boundedSeats };
+      const nextStopScopeIds = isBuggyType(prev.type) ? uniqueStrings(prev.stopScopeIds || []) : [];
+      if (boundedSeats === Number(prev.seats) && nextStopScopeIds.length === (prev.stopScopeIds || []).length) return prev;
+      return { ...prev, seats: boundedSeats, stopScopeIds: nextStopScopeIds };
     });
-  }, [vehicleTypeOptions]);
+  }, [vehicleTypeOptions, vehicleTypeCatalog]);
 
   return (
     <section className="page active space-y-5" id="page-vehicles">
@@ -853,7 +943,7 @@ export default function VehiclesPage() {
             </div>
             <div className="fleet-type-icon"><i className={`fa ${(v.type || '').includes('Bus') ? 'fa-bus' : (v.type || '').includes('Buggy') ? 'fa-shuttle-space' : (v.type || '').includes('E-Bike') ? 'fa-bolt' : 'fa-bicycle'}`}></i></div>
             <button type="button" className="fleet-id cursor-pointer text-left text-teal-400 hover:underline" onClick={() => handleVehicleDetail(v)}>{v.id}</button>
-            <div className="fleet-org text-xs">{v.type} • {v.org} • {v.location || 'Unassigned'}</div>
+            <div className="fleet-org text-xs">{v.type} • {v.org} • {summarizeStops(v)}</div>
             <div className="fleet-actions flex items-center gap-2">
               <button className="btn-outline" onClick={() => toggleLock(v.id)}><i className={`fa fa-${v.locked ? 'lock-open' : 'lock'}`}></i> {v.locked ? 'Unlock' : 'Lock'}</button>
               <button className="act-btn" title="QR View" onClick={() => handleQrView(v)}><i className="fa fa-qrcode"></i></button>
@@ -926,7 +1016,7 @@ export default function VehiclesPage() {
                   <td>{enrichedRows.find((entry) => entry.id === row.id)?.assignedDriverName || 'Unassigned'}</td>
                   <td>{row.biz}</td>
                   <td>{row.org}</td>
-                  <td>{row.location || 'Unassigned'}</td>
+                  <td>{summarizeStops(row)}</td>
                   <td><span className={`status ${STATUS_CLASS[row.status]}`}>{row.status}</span></td>
                   <td>
                     <button className={`status status-toggle-btn ${row.locked ? 'cancelled' : 'completed'}`} onClick={() => toggleLock(row.id)}>
@@ -1007,6 +1097,25 @@ export default function VehiclesPage() {
               {locationOptions.map((location) => <option key={location}>{location}</option>)}
             </select>
           </div>
+          {isBuggyType(form.type) && (
+            <div className="form-field full">
+              <label>Route Stops (Station Locations)</label>
+              <select
+                className="setting-input"
+                multiple
+                size={Math.min(Math.max(stationOptions.length, 3), 8)}
+                value={form.stopScopeIds || []}
+                onChange={setStopScopeIdsFromEvent}
+              >
+                {stationOptions.map((station) => (
+                  <option key={station.scopeId} value={station.scopeId}>
+                    {station.stationName} - {station.locationName}
+                  </option>
+                ))}
+              </select>
+              <small className="text-[11px] text-slate-400">For buggy routes, select one or more stations. Hold Ctrl/Cmd to select multiple stops.</small>
+            </div>
+          )}
           <div className="form-field"><label>Status</label>
             <select className="setting-input" value={form.status} onChange={f('status')}>
               <option>Active</option>
@@ -1176,6 +1285,7 @@ export default function VehiclesPage() {
               <div className="form-field"><label>Business Type</label><input className="setting-input" value={detailVehicle.biz} readOnly /></div>
               <div className="form-field"><label>Organization</label><input className="setting-input" value={detailVehicle.org} readOnly /></div>
               <div className="form-field"><label>Location</label><input className="setting-input" value={detailVehicle.location || 'Unassigned'} readOnly /></div>
+              <div className="form-field full"><label>Route Stops</label><input className="setting-input" value={summarizeStops(detailVehicle)} readOnly /></div>
               <div className="form-field"><label>Status</label><input className="setting-input" value={detailVehicle.status} readOnly /></div>
               <div className="form-field"><label>Lock State</label><input className="setting-input" value={detailVehicle.locked ? 'Locked' : 'Unlocked'} readOnly /></div>
             </div>
@@ -1184,13 +1294,23 @@ export default function VehiclesPage() {
               <div className="overflow-hidden rounded-lg border border-slate-700">
                 <Suspense fallback={<div className="flex h-[300px] items-center justify-center bg-slate-950/20 text-sm text-slate-400">Loading map...</div>}>
                   <StationMap
-                    stations={[{
-                      id: detailVehicle.id,
-                      name: `${detailVehicle.type} • ${detailVehicle.org}`,
-                      locationPin: detailVehicle.locationPin || LOCATION_COORDINATES[detailVehicle.location] || '20.5937,78.9629',
-                      status: detailVehicle.status,
-                      city: detailVehicle.location,
-                    }]}
+                    stations={
+                      Array.isArray(detailVehicle.stationStops) && detailVehicle.stationStops.length
+                        ? detailVehicle.stationStops.map((stop, index) => ({
+                            id: `${detailVehicle.id}-${index + 1}`,
+                            name: `${index + 1}. ${stop.stationName}`,
+                            locationPin: stop.locationPin || detailVehicle.locationPin || '20.5937,78.9629',
+                            status: detailVehicle.status,
+                            city: stop.locationName,
+                          }))
+                        : [{
+                            id: detailVehicle.id,
+                            name: `${detailVehicle.type} • ${detailVehicle.org}`,
+                            locationPin: detailVehicle.locationPin || '20.5937,78.9629',
+                            status: detailVehicle.status,
+                            city: detailVehicle.location,
+                          }]
+                    }
                     height="300px"
                   />
                 </Suspense>
