@@ -41,7 +41,7 @@ const COLUMNS = [
 ];
 
 function blank(defaultType = '') {
-  return { type: defaultType, mode: 'single', prefix: 'VH-', count: 1, biz: '', org: '', location: 'Unassigned', status: 'Active', locked: 'unlocked', driverId: '' };
+  return { type: defaultType, mode: 'single', prefix: 'VH-', count: 1, biz: '', org: '', location: 'Unassigned', status: 'Active', locked: 'unlocked', driverId: '', seats: 1 };
 }
 
 function getVehicleTypeCatalog(businessSetup, rows = []) {
@@ -188,9 +188,11 @@ export default function VehiclesPage() {
   const enrichedRows = useMemo(() => rows.map((row) => {
     const meta = vehicleTypeCatalog[row.type] || { seatCount: 1, driverApplicable: false };
     const assignedDriverId = driverByVehicleId[row.id] || '';
+    const maxSeats = Math.max(1, Number(meta.seatCount) || 1);
+    const boundedSeats = Math.min(maxSeats, Math.max(1, Number(row.seats) || maxSeats));
     return {
       ...row,
-      seats: Number(meta.seatCount) || 1,
+      seats: boundedSeats,
       driverApplicable: Boolean(meta.driverApplicable),
       driverMode: meta.driverApplicable ? 'Driver Required' : 'Self Ride',
       driverId: assignedDriverId,
@@ -262,7 +264,9 @@ export default function VehiclesPage() {
 
   const openCreateModal = (mode = 'single') => {
     setEditingVehicleId(null);
-    setForm({ ...blank(vehicleTypeOptions[0] || ''), mode });
+    const defaultType = vehicleTypeOptions[0] || '';
+    const defaultSeats = Math.max(1, Number(vehicleTypeCatalog[defaultType]?.seatCount) || 1);
+    setForm({ ...blank(defaultType), mode, seats: defaultSeats });
     setShowAdd(true);
   };
 
@@ -274,6 +278,7 @@ export default function VehiclesPage() {
       mode: 'single',
       prefix: row.id.replace(/\d+$/, ''),
       count: 1,
+      seats: Math.max(1, Number(row.seats) || Number(vehicleTypeCatalog[row.type]?.seatCount) || 1),
       biz: row.biz,
       org: row.org,
       location: row.location || 'Unassigned',
@@ -294,6 +299,8 @@ export default function VehiclesPage() {
       const nextLocation = form.location || 'Unassigned';
       const nextLocationPin = resolveLocationPin(nextLocation);
       const editedMeta = vehicleTypeCatalog[form.type] || { driverApplicable: false };
+      const maxSeats = Math.max(1, Number(editedMeta.seatCount) || 1);
+      const nextSeats = Math.min(maxSeats, Math.max(1, Number(form.seats) || maxSeats));
 
       if (editedMeta.driverApplicable && form.driverId) {
         const assignedVehicleId = getAssignedVehicleIdForDriver(vehicleDriverRows, form.driverId);
@@ -318,6 +325,7 @@ export default function VehiclesPage() {
         locationPin: nextLocationPin,
         status: form.status,
         locked: form.locked === 'locked',
+        seats: nextSeats,
         qr: existingRow.qr || '',
       };
 
@@ -358,6 +366,8 @@ export default function VehiclesPage() {
     const nextVehicleSequence = getNextVehicleSequence(rows);
     const nextQrSequence = getNextQrSequence(rows);
     const nextMeta = vehicleTypeCatalog[form.type] || { seatCount: 1, driverApplicable: false };
+    const maxSeats = Math.max(1, Number(nextMeta.seatCount) || 1);
+    const nextSeats = Math.min(maxSeats, Math.max(1, Number(form.seats) || maxSeats));
     const nextLocation = form.location || 'Unassigned';
     const nextLocationPin = resolveLocationPin(nextLocation);
 
@@ -365,7 +375,7 @@ export default function VehiclesPage() {
       id: `${form.prefix}${String(nextVehicleSequence + i).padStart(3, '0')}`,
       qr: `QR-${nextQrSequence + i}`,
       type: form.type,
-      seats: nextMeta.seatCount,
+      seats: nextSeats,
       driverApplicable: nextMeta.driverApplicable,
       biz: form.biz || 'General',
       org: form.org || 'Global Pool',
@@ -778,7 +788,16 @@ export default function VehiclesPage() {
   }, [locationOptions, organizationOptions]);
 
   useEffect(() => {
-    setForm((prev) => (vehicleTypeOptions.includes(prev.type) ? prev : { ...blank(vehicleTypeOptions[0] || ''), mode: prev.mode }));
+    setForm((prev) => {
+      if (!vehicleTypeOptions.includes(prev.type)) {
+        const fallbackType = vehicleTypeOptions[0] || '';
+        const fallbackSeats = Math.max(1, Number(vehicleTypeCatalog[fallbackType]?.seatCount) || 1);
+        return { ...blank(fallbackType), mode: prev.mode, seats: fallbackSeats };
+      }
+      const maxSeats = Math.max(1, Number(vehicleTypeCatalog[prev.type]?.seatCount) || 1);
+      const boundedSeats = Math.min(maxSeats, Math.max(1, Number(prev.seats) || maxSeats));
+      return boundedSeats === Number(prev.seats) ? prev : { ...prev, seats: boundedSeats };
+    });
   }, [vehicleTypeOptions]);
 
   return (
@@ -902,7 +921,7 @@ export default function VehiclesPage() {
                   <td><button type="button" className="mono text-teal-400 hover:underline" onClick={() => handleVehicleDetail(row)}>{row.id}</button></td>
                   <td><span className="mono">{row.qr}</span></td>
                   <td>{row.type}</td>
-                  <td>{vehicleTypeCatalog[row.type]?.seatCount || row.seats || 1}</td>
+                  <td>{row.seats || vehicleTypeCatalog[row.type]?.seatCount || 1}</td>
                   <td><span className={`status ${(vehicleTypeCatalog[row.type]?.driverApplicable || row.driverApplicable) ? 'processing' : 'pending'}`}>{(vehicleTypeCatalog[row.type]?.driverApplicable || row.driverApplicable) ? 'Driver' : 'Self Ride'}</span></td>
                   <td>{enrichedRows.find((entry) => entry.id === row.id)?.assignedDriverName || 'Unassigned'}</td>
                   <td>{row.biz}</td>
@@ -962,7 +981,7 @@ export default function VehiclesPage() {
               {activeBusinessTypes.map((businessType) => <option key={businessType.id} value={businessType.name}>{businessType.name}</option>)}
             </select>
           </div>
-          <div className="form-field"><label>Seats</label><input className="setting-input" value={selectedTypeMeta.seatCount || 1} readOnly /></div>
+          <div className="form-field"><label>Seats</label><input type="number" min={1} max={selectedTypeMeta.seatCount || 1} className="setting-input" value={form.seats} onChange={f('seats')} /></div>
           <div className="form-field"><label>Driver Applicable</label><input className="setting-input" value={selectedTypeMeta.driverApplicable ? 'Yes' : 'No'} readOnly /></div>
           {selectedTypeMeta.driverApplicable && (
             <div className="form-field"><label>Assign Driver</label>
@@ -1151,7 +1170,7 @@ export default function VehiclesPage() {
               <div className="form-field"><label>Vehicle ID</label><input className="setting-input mono" value={detailVehicle.id} readOnly /></div>
               <div className="form-field"><label>QR Code</label><input className="setting-input mono" value={detailVehicle.qr} readOnly /></div>
               <div className="form-field"><label>Vehicle Type</label><input className="setting-input" value={detailVehicle.type} readOnly /></div>
-              <div className="form-field"><label>Seats</label><input className="setting-input" value={vehicleTypeCatalog[detailVehicle.type]?.seatCount || detailVehicle.seats || 1} readOnly /></div>
+              <div className="form-field"><label>Seats</label><input className="setting-input" value={detailVehicle.seats || vehicleTypeCatalog[detailVehicle.type]?.seatCount || 1} readOnly /></div>
               <div className="form-field"><label>Driver Applicable</label><input className="setting-input" value={vehicleTypeCatalog[detailVehicle.type]?.driverApplicable ? 'Yes' : 'No'} readOnly /></div>
               <div className="form-field"><label>Assigned Driver</label><input className="setting-input" value={enrichedRows.find((row) => row.id === detailVehicle.id)?.assignedDriverName || 'Unassigned'} readOnly /></div>
               <div className="form-field"><label>Business Type</label><input className="setting-input" value={detailVehicle.biz} readOnly /></div>
