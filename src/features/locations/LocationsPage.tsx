@@ -165,6 +165,29 @@ function mergeVehiclesFromFleetRows(currentLocations, fleetRows) {
 }
 
 function mapApiLocation(raw) {
+  const hasStationShape = Boolean(raw && (raw.coordinates || raw.latitude || raw.longitude));
+  if (hasStationShape) {
+    const stationId = String(raw.id || raw.apiId || createStationId(999));
+    const pin = raw.coordinates || `${raw.latitude || '0'},${raw.longitude || '0'}`;
+    return {
+      ...defaultLocation(stationId),
+      id: stationId,
+      sourceType: 'manual',
+      name: raw.name || `Station ${stationId}`,
+      description: raw.description || 'Mapped from backend station',
+      status: String(raw.status || 'active').toLowerCase() === 'active' ? 'Active' : 'Inactive',
+      stations: [{
+        id: stationId,
+        name: raw.name || `Station ${stationId}`,
+        locationPin: pin,
+        city: raw.city || '',
+        state: raw.state || '',
+        status: 'Active',
+      }],
+      stationDisplayCount: 1,
+    };
+  }
+
   return {
     ...defaultLocation(String(raw.id || raw.location_id || createLocationId(999))),
     id: String(raw.id || raw.location_id || createLocationId(999)),
@@ -242,12 +265,9 @@ export default function LocationsPage() {
       try {
         const remoteRows = await listLocations({ page: 1, limit: 300 });
         if (!mounted) return;
-        if (Array.isArray(remoteRows) && remoteRows.length) {
-          setLocations(remoteRows.map((row) => mapApiLocation(row)));
-          setLocationsMode('API');
-        } else {
-          setLocationsMode('Local');
-        }
+        const nextRows = Array.isArray(remoteRows) ? remoteRows : [];
+        setLocations(nextRows.map((row) => mapApiLocation(row)));
+        setLocationsMode('API');
       } catch (error) {
         if (!mounted) return;
         setLocationsMode('Local');
@@ -829,9 +849,10 @@ export default function LocationsPage() {
           (station) => isValidLocationPin(station.locationPin),
         );
         if (stationsToCreate.length === 0) {
-          // No valid station coordinates to persist; the backend has nothing to
-          // store for a location without stations. Keep it local only.
-          setLocations((prev) => [payload, ...prev]);
+          const message = 'At least one station with a valid location pin is required to save this location in backend.';
+          setLocationsSyncError(message);
+          window.alert(message);
+          return;
         } else {
           for (const station of stationsToCreate) {
             const [latStr, lngStr] = String(station.locationPin)
@@ -847,9 +868,8 @@ export default function LocationsPage() {
           }
           // Refetch server truth so the list reflects the real created stations.
           const remoteRows = await listLocations({ page: 1, limit: 300 });
-          if (Array.isArray(remoteRows) && remoteRows.length) {
-            setLocations(remoteRows.map((row) => mapApiLocation(row)));
-          }
+          const nextRows = Array.isArray(remoteRows) ? remoteRows : [];
+          setLocations(nextRows.map((row) => mapApiLocation(row)));
         }
         setShowCreateModal(false);
         setLocationForm(defaultLocation(createLocationId(locations.length + 2)));
