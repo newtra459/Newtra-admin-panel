@@ -244,6 +244,25 @@ function makeId(prefix, length) {
   return `${prefix}-${String(length + 1).padStart(3, '0')}`;
 }
 
+function normalizeOrganizationStatus(raw) {
+  const statusText = String(raw?.status || '').trim().toLowerCase();
+  if (statusText) {
+    if (['active', 'enabled', 'true', '1'].includes(statusText)) return 'Active';
+    if (['suspended', 'on_hold', 'on-hold', 'paused'].includes(statusText)) return 'Suspended';
+    if (['inactive', 'disabled', 'false', '0'].includes(statusText)) return 'Inactive';
+  }
+
+  if (typeof raw?.is_active === 'boolean') {
+    return raw.is_active ? 'Active' : 'Inactive';
+  }
+
+  if (typeof raw?.active === 'boolean') {
+    return raw.active ? 'Active' : 'Inactive';
+  }
+
+  return 'Active';
+}
+
 function mapApiOrganization(raw, settings, businessSetup) {
   const id = String(raw.id || raw.organization_id || makeId('ORG', 0));
   const next = createBlankOrganization(id, settings, businessSetup);
@@ -259,7 +278,7 @@ function mapApiOrganization(raw, settings, businessSetup) {
   next.zipCode = raw.zip_code || '';
   next.contactEmail = raw.contact_email || '';
   next.contactPhone = raw.contact_phone || '';
-  next.status = String(raw.status || 'active').toLowerCase() === 'active' ? 'Active' : 'Inactive';
+  next.status = normalizeOrganizationStatus(raw);
   return next;
 }
 
