@@ -6,6 +6,7 @@ import { BUSINESS_SETUP_UPDATED_EVENT, getActiveBusinessTypes, getActiveOrganiza
 import { loadOperationalLocations, loadOperationalOrganizations, saveOperationalLocations, saveOperationalOrganizations } from '../../config/operations-store';
 import { isApiIntegrationEnabled } from '../../api/runtime';
 import { createOrganization as createOrganizationApi, deleteOrganization as deleteOrganizationApi, listOrganizations } from '../../api/services/organizationsService';
+import { createLocation as createLocationApi } from '../../api/services/locationsService';
 
 const VEHICLE_INVENTORY_BASE = {
   Cycle: 210,
@@ -821,6 +822,20 @@ export default function OrganizationsPage() {
         org.stations = org.stations.map((s) => (s.id === editingStationId ? { ...payload, id: editingStationId } : s));
       } else {
         org.stations.push({ ...payload, id: makeId('ST', org.stations.length) });
+      }
+      // Sync new station to backend with b2b_id linking it to this org
+      if (usingApi && !editingStationId && isValidLocationPin(stationForm.locationPin)) {
+        const [latStr, lngStr] = String(stationForm.locationPin).split(',').map((p) => p.trim());
+        const orgApiId = org.apiId || org.id || '';
+        createLocationApi({
+          name: stationForm.name,
+          latitude: latStr,
+          longitude: lngStr,
+          capacity: 0,
+          currentCapacity: 0,
+          // Pass b2b_id through subscriptionIds so backend links station to org
+          subscriptionIds: { b2b_id: orgApiId, subscription_id: null } as Record<string, unknown>,
+        } as any).catch(() => { /* non-blocking */ });
       }
       return org;
     });

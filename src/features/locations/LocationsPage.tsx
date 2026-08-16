@@ -14,6 +14,31 @@ import {
 } from '../../config/staff-operations-store';
 import { isApiIntegrationEnabled } from '../../api/runtime';
 import { createLocation as createLocationApi, deleteLocation, listLocations, updateLocation } from '../../api/services/locationsService';
+import { httpRequest } from '../../api/httpClient';
+
+// Map a B2B org entry into a location card so orgs appear in the Locations module
+function mapB2BOrgToLocation(org: Record<string, unknown>, index: number) {
+  const id = String(org.id || `b2b-loc-${index}`);
+  return {
+    id,
+    sourceType: 'organization',
+    businessTypeId: '',
+    businessType: String(org.type || ''),
+    stateLocationId: '',
+    cityLocationId: '',
+    name: String(org.name || 'Unnamed Organization'),
+    description: String(org.description || org.city || ''),
+    state: '',
+    city: String(org.city || ''),
+    status: org.is_active === false ? 'Inactive' : 'Active',
+    vehicles: { total: 0, statusTotals: { Available: 0, Maintenance: 0, Running: 0 }, byType: {}, statusByType: {} },
+    revenue: '₹0',
+    health: 'Good',
+    stations: [],
+    stationDisplayCount: 0,
+    orgId: id,
+  };
+}
 
 const VEHICLE_STATUS_OPTIONS = ['Available', 'Maintenance', 'Running'];
 
@@ -169,6 +194,8 @@ function mapApiLocation(raw) {
   if (hasStationShape) {
     const stationId = String(raw.id || raw.apiId || createStationId(999));
     const pin = raw.coordinates || `${raw.latitude || '0'},${raw.longitude || '0'}`;
+    // Carry b2b_id so the caller can merge this station under its parent org location
+    const b2bId = (raw.subscriptionIds as Record<string, unknown>)?.b2b_id || null;
     return {
       ...defaultLocation(stationId),
       id: stationId,
@@ -176,6 +203,7 @@ function mapApiLocation(raw) {
       name: raw.name || `Station ${stationId}`,
       description: raw.description || 'Mapped from backend station',
       status: String(raw.status || 'active').toLowerCase() === 'active' ? 'Active' : 'Inactive',
+      _b2bId: b2bId,
       stations: [{
         id: stationId,
         name: raw.name || `Station ${stationId}`,
@@ -263,10 +291,45 @@ export default function LocationsPage() {
       setIsLocationsLoading(true);
       setLocationsSyncError('');
       try {
+        // Load stations
         const remoteRows = await listLocations({ page: 1, limit: 300 });
         if (!mounted) return;
-        const nextRows = Array.isArray(remoteRows) ? remoteRows : [];
-        setLocations(nextRows.map((row) => mapApiLocation(row)));
+        const stationRows = Array.isArray(remoteRows) ? remoteRows.filter((r: any) => r.id) : [];
+        const stationLocations = stationRows.map((row) => mapApiLocation(row as any));
+
+        // Also load B2B orgs as location cards so orgs appear here
+        let orgLocations: ReturnType<typeof mapB2BOrgToLocation>[] = [];
+        try {
+          const orgPayload = await httpRequest({ method: 'GET', path: '/v1/b2b', query: { page: 1, limit: 200 } }) as Record<string, unknown>;
+          const orgRows: Record<string, unknown>[] = Array.isArray(orgPayload)
+            ? orgPayload as Record<string, unknown>[]
+            : Array.isArray((orgPayload as Record<string, unknown>)?.data)
+              ? (orgPayload as Record<string, unknown>).data as Record<string, unknown>[]
+              : [];
+          // Filter out settings entries and map orgs → location cards
+          orgLocations = orgRows
+            .filter((r) => r.name !== '__admin_settings__' && r.type !== '__settings__' && r.is_active !== false)
+            .map((r, i) => mapB2BOrgToLocation(r, i));
+          // Merge station sub-entries under their linked org (via subscription_ids.b2b_id)
+          stationLocations.forEach((stLoc: any) => {
+            const rawB2bId = (stLoc as any)._b2bId;
+            if (rawB2bId) {
+              const parent = orgLocations.find((o) => o.id === rawB2bId);
+              if (parent) {
+                parent.stations.push({ id: stLoc.id, name: stLoc.name, locationPin: stLoc.stations?.[0]?.locationPin || '', city: stLoc.city, state: stLoc.state, status: 'Active' });
+                parent.stationDisplayCount = parent.stations.length;
+                return;
+              }
+            }
+          });
+        } catch { /* B2B fetch optional */ }
+
+        // Combine: org-backed locations + any unlinked station locations
+        const linkedStationIds = new Set(orgLocations.flatMap((o) => o.stations.map((s) => s.id)));
+        const unlinkedStations = stationLocations.filter((s: any) => !linkedStationIds.has(s.id));
+        const allLocations = [...orgLocations, ...unlinkedStations];
+
+        setLocations(allLocations.length ? allLocations : stationLocations);
         setLocationsMode('API');
       } catch (error) {
         if (!mounted) return;
