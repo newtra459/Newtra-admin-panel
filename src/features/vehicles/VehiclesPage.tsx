@@ -100,6 +100,42 @@ function summarizeStops(row) {
   return `${stops.length} stops • ${stops.map((stop) => stop.stationName).join(' -> ')}`;
 }
 
+function normalizePlaceholderText(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isPlaceholderBizOrOrg(value) {
+  const normalized = normalizePlaceholderText(value);
+  return !normalized || normalized === 'general' || normalized === 'global pool';
+}
+
+function mergeRemoteWithLocalVehicle(remoteRow, localRow) {
+  if (!localRow) return remoteRow;
+
+  const merged = {
+    ...localRow,
+    ...remoteRow,
+  };
+
+  if (isPlaceholderBizOrOrg(remoteRow.biz) && localRow.biz) merged.biz = localRow.biz;
+  if (isPlaceholderBizOrOrg(remoteRow.org) && localRow.org) merged.org = localRow.org;
+
+  const remoteHasRealLocation = remoteRow.location && !String(remoteRow.location).toLowerCase().includes('unassigned');
+  if (!remoteHasRealLocation && localRow.location) merged.location = localRow.location;
+
+  if (!remoteRow.locationPin && localRow.locationPin) merged.locationPin = localRow.locationPin;
+  if (!Number(remoteRow.seats) && Number(localRow.seats)) merged.seats = localRow.seats;
+
+  if (Array.isArray(localRow.stationStopScopeIds) && localRow.stationStopScopeIds.length) {
+    merged.stationStopScopeIds = localRow.stationStopScopeIds;
+  }
+  if (Array.isArray(localRow.stationStops) && localRow.stationStops.length) {
+    merged.stationStops = localRow.stationStops;
+  }
+
+  return merged;
+}
+
 function getVehicleTypeCatalog(businessSetup, rows = []) {
   const configuredTypes = getActiveVehicleTypes(businessSetup);
   const catalog = {};
@@ -492,7 +528,9 @@ export default function VehiclesPage() {
         // createVehicle now returns a mapped VehicleRow (or null); fall back to
         // the locally-built row so we never inject the raw API envelope (which
         // has no .type and crashed the fleet-card render).
-        setRows((prev) => [...prev, created || nextRows[0]]);
+        const localDraft = nextRows[0];
+        const mergedCreated = created ? mergeRemoteWithLocalVehicle(created, localDraft) : localDraft;
+        setRows((prev) => [...prev, mergedCreated]);
       } catch (error) {
         reportVehiclesApiError('Create vehicle', error);
         return;
@@ -820,7 +858,19 @@ export default function VehiclesPage() {
         const remoteRows = await listVehicles({ page: 1, limit: 500 });
         if (!mounted) return;
         if (Array.isArray(remoteRows) && remoteRows.length) {
-          setRows(remoteRows);
+          const localRows = loadFleetRows(SEED);
+          const localById = localRows.reduce((acc, row) => {
+            if (row?.id) acc[row.id] = row;
+            if (row?.apiId) acc[row.apiId] = row;
+            return acc;
+          }, {});
+
+          const mergedRows = remoteRows.map((remoteRow) => {
+            const localMatch = localById[remoteRow.id] || localById[remoteRow.apiId];
+            return mergeRemoteWithLocalVehicle(remoteRow, localMatch);
+          });
+
+          setRows(mergedRows);
           setVehiclesMode('API');
         } else {
           setVehiclesMode('Local');
