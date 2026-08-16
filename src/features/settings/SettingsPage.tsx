@@ -6,6 +6,8 @@ import { FEATURE_NAV_ITEMS } from '../../config/feature-config';
 import { loadOperationalLocations, loadOperationalOrganizations } from '../../config/operations-store';
 import { loadFleetRows } from '../../utils/fleetSync';
 import { loadSubscriptionPlans } from '../../config/subscription-plans';
+import { isApiIntegrationEnabled } from '../../api/runtime';
+import { listLocations } from '../../api/services/locationsService';
 
 const TABS = [
   { id: 'business', label: 'Business Types', icon: 'fa-briefcase', accent: '#00d4a0', category: 'Business Setup' },
@@ -387,6 +389,7 @@ function CollectionEditor({ title, items, placeholder, onAdd, onRemove }) {
 }
 
 export default function SettingsPage() {
+  const usingApi = isApiIntegrationEnabled();
   const initialSettings = loadOrganizationSettings();
   const initialHierarchy = loadHierarchySettings();
   const [activeTab, setActiveTab] = useState('business');
@@ -420,6 +423,9 @@ export default function SettingsPage() {
   const [twoFa,      setTwoFa]      = useState(true);
   const [profileSaveState, setProfileSaveState] = useState('idle');
   const [templateNotice, setTemplateNotice] = useState('');
+  const [backendStations, setBackendStations] = useState([]);
+  const [isBackendStationsLoading, setIsBackendStationsLoading] = useState(false);
+  const [backendStationsError, setBackendStationsError] = useState('');
 
   const bizTypes = businessTypes.filter((item) => item.status === 'active').map((item) => item.name);
   const orgTypes = organizationTypes.filter((item) => item.status === 'active').map((item) => item.name);
@@ -474,6 +480,37 @@ export default function SettingsPage() {
   useEffect(() => {
     saveRoleTemplates(roleTemplates);
   }, [roleTemplates]);
+
+  useEffect(() => {
+    if (!usingApi) {
+      setBackendStations([]);
+      setBackendStationsError('');
+      setIsBackendStationsLoading(false);
+      return;
+    }
+
+    let mounted = true;
+    const hydrateBackendStations = async () => {
+      setIsBackendStationsLoading(true);
+      setBackendStationsError('');
+      try {
+        const rows = await listLocations({ page: 1, limit: 300 });
+        if (!mounted) return;
+        setBackendStations(Array.isArray(rows) ? rows : []);
+      } catch (error) {
+        if (!mounted) return;
+        setBackendStations([]);
+        setBackendStationsError(error?.message || 'Unable to load backend stations.');
+      } finally {
+        if (mounted) setIsBackendStationsLoading(false);
+      }
+    };
+
+    hydrateBackendStations();
+    return () => {
+      mounted = false;
+    };
+  }, [usingApi]);
 
   useEffect(() => {
     if (!roleTemplates.some((item) => item.name === invite.role)) {
@@ -1556,6 +1593,48 @@ export default function SettingsPage() {
           {activeTab === 'locations' && (
             <div className="settings-group">
               <h3 className="!mb-3 !pb-0 !border-none">Locations</h3>
+              {usingApi && (
+                <div style={{ border: '1px solid var(--border-1)', borderRadius: '10px', background: 'var(--bg-2)', padding: '10px 12px', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                    <strong style={{ fontSize: '0.82rem', color: 'var(--text-1)' }}>
+                      <i className="fa fa-database" style={{ marginRight: '6px' }}></i>
+                      Backend Stations (API)
+                    </strong>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>
+                      {isBackendStationsLoading ? 'Syncing...' : `${backendStations.length} records`}
+                    </span>
+                  </div>
+                  {backendStationsError && (
+                    <p style={{ fontSize: '0.76rem', color: 'var(--accent-red)', marginBottom: '8px' }}>
+                      <i className="fa fa-circle-exclamation" style={{ marginRight: '5px' }}></i>
+                      {backendStationsError}
+                    </p>
+                  )}
+                  {!isBackendStationsLoading && !backendStationsError && backendStations.length === 0 && (
+                    <p style={{ fontSize: '0.76rem', color: 'var(--text-3)', marginBottom: 0 }}>No backend station records found.</p>
+                  )}
+                  {!isBackendStationsLoading && backendStations.length > 0 && (
+                    <div style={{ display: 'grid', gap: '6px' }}>
+                      {backendStations.slice(0, 8).map((station) => (
+                        <div key={station.id} className="settings-list-row" style={{ marginBottom: 0 }}>
+                          <div style={{ display: 'grid', gap: '2px', minWidth: 0 }}>
+                            <strong style={{ color: 'var(--text-1)', fontSize: '0.82rem' }}>{station.name || 'Unnamed Station'}</strong>
+                            <span style={{ color: 'var(--text-3)', fontSize: '0.72rem' }}>
+                              {station.coordinates || `${station.latitude || '0'},${station.longitude || '0'}`}
+                            </span>
+                          </div>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-2)' }}>Capacity {Number(station.capacity || 0)}</span>
+                        </div>
+                      ))}
+                      {backendStations.length > 8 && (
+                        <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: 'var(--text-3)' }}>
+                          Showing first 8 records. Open Locations module for full operational view.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <p style={{ fontSize: '0.78rem', color: 'var(--text-2)', marginBottom: '8px' }}>
                 Build location hierarchy in order: Global to State to City to Station.
               </p>
