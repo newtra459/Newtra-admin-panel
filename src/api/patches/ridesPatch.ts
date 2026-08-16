@@ -69,7 +69,7 @@ export const RIDES_PATCH = {
       pickupLoc: raw.station_id || 'N/A',
       dropoffLoc: '',
       distance: `${distKm.toFixed(1)} km`,
-      fare: '₹0',
+      fare: raw.subscription_id ? 'Subscription' : raw.access_mode === 'wallet' ? 'Wallet' : (raw.access_mode || '—'),
       paymentMethod: raw.access_mode || 'subscription',
       startTime: formatTimeLabel(start),
       endTime: end ? formatTimeLabel(end) : '',

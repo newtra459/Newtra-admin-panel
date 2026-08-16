@@ -4,6 +4,7 @@ import { useFilterPanel, FilterPanel } from '../../components/ColumnFilter';
 import { BUSINESS_SETUP_UPDATED_EVENT, isDriverManagedVehicleType, loadBusinessSetup } from '../../config/business-setup';
 import { forceEndRide } from '../../api/services/ridesService';
 import { useRides } from '../../api/hooks/useRides';
+import { useUsers } from '../../api/hooks/useUsers';
 
 const TODAY_LABEL = new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
 
@@ -55,8 +56,15 @@ function getFareCategory(ride) {
 
 export default function RidesPage() {
   const { data: apiRides = [], isLoading: isRidesLoading } = useRides();
+  const { data: apiUsersList = [] } = useUsers();
   const [businessSetup, setBusinessSetup] = useState(loadBusinessSetup);
   const [rides, setRides] = useState([]);
+
+  const usersById = useMemo(() => {
+    const map = new Map<string, (typeof apiUsersList)[0]>();
+    apiUsersList.forEach((u) => map.set(String(u.id || u.apiId || ''), u));
+    return map;
+  }, [apiUsersList]);
   const [selected, setSelected] = useState([]);
   const [detailRide, setDetailRide] = useState(null);
   const [detailUser, setDetailUser] = useState(null);
@@ -72,8 +80,14 @@ export default function RidesPage() {
   }, []);
 
   useEffect(() => {
-    if (apiRides.length) setRides(apiRides);
-  }, [apiRides]);
+    if (apiRides.length) {
+      setRides(apiRides.map((ride) => {
+        const realUser = usersById.get(String(ride.userId || ''));
+        if (!realUser) return ride;
+        return { ...ride, user: realUser.name, org: realUser.orgName || ride.org || 'Global Pool' };
+      }));
+    }
+  }, [apiRides, usersById]);
 
 
 
@@ -142,37 +156,53 @@ export default function RidesPage() {
   const userProfile = useMemo(() => {
     if (!detailUser) return null;
 
+    const realUser = usersById.get(String(detailUser.userId || ''));
     const completedRides = userRideHistory.filter((ride) => ride.status === 'Completed').length;
     const activeRides = userRideHistory.filter((ride) => ride.status === 'Active').length;
+    const location = `${detailUser.pickupLoc || '—'} → ${detailUser.dropoffLoc || '—'}`;
 
+    if (realUser) {
+      return {
+        ...realUser,
+        rides: userRideHistory.length,
+        activeRides,
+        completedRides,
+        cancelledRides: 0,
+        location,
+        groups: realUser.groups?.length ? realUser.groups : (detailUser.org ? [detailUser.org] : []),
+      };
+    }
+
+    // Fallback when user is not in current users list
     return {
-      id: `USR-${detailUser.id.replace('RD-', '')}`,
-      empId: `EMP-${detailUser.id.replace('RD-', '')}`,
+      id: detailUser.userId || `USR-${detailUser.id}`,
+      apiId: detailUser.userId || '',
+      empId: '—',
       name: detailUser.user,
-      email: `${detailUser.user.toLowerCase().replace(/\s+/g, '.')}@mjollnir.io`,
-      role: detailUser.org.toLowerCase().includes('campus') ? 'Student / Staff' : 'Rider',
-      businessType: detailUser.org.toLowerCase().includes('campus') ? 'Campus Mobility' : detailUser.org.toLowerCase().includes('park') || detailUser.org.toLowerCase().includes('public') ? 'Public / General Mobility' : 'Corporate Mobility',
-      orgType: detailUser.org.toLowerCase().includes('campus') ? 'University / College' : detailUser.org.toLowerCase().includes('park') || detailUser.org.toLowerCase().includes('public') ? 'Public Zone' : 'Corporate Office',
-      orgName: detailUser.org,
-      status: detailUser.status === 'Active' ? 'Active' : 'Completed',
-      joined: '12 Jan 2026',
-      wallet: detailUser.paymentMethod === 'Corporate Account' ? '₹0' : '₹1,240',
-      coins: detailUser.paymentMethod === 'Corporate Account' ? 0 : 148,
-      location: `${detailUser.pickupLoc} -> ${detailUser.dropoffLoc}`,
+      phone: '—',
+      email: '—',
+      avatar: '',
+      role: 'Viewer',
+      status: 'Active',
+      joined: '—',
+      businessType: '—',
+      orgType: '—',
+      orgName: detailUser.org || '—',
+      organizationId: '',
+      wallet: '—',
+      coins: 0,
+      points: 0,
+      weight: '—',
+      location,
       rides: userRideHistory.length,
       activeRides,
       completedRides,
       cancelledRides: 0,
-      subscriptions: detailUser.paymentMethod === 'Corporate Account'
-        ? []
-        : [{ id: 'SUB-001', name: 'Mobility Prime', amount: '₹899', startDate: '01 Mar 2026', status: 'Active' }],
+      subscriptions: [],
       groups: detailUser.org ? [detailUser.org] : [],
-      achievements: [
-        { id: 'ACH-001', name: 'Frequent Rider', note: 'Completed 10+ rides this month' },
-        { id: 'ACH-002', name: 'Green Traveller', note: `Saved ${detailUser.co2Saved} CO2 on latest ride` },
-      ],
+      achievements: [],
     };
-  }, [detailUser, userRideHistory]);
+  }, [detailUser, userRideHistory, usersById]);
 
   const rideSummary = useMemo(() => {
     if (!detailRide) return null;

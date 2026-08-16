@@ -177,7 +177,10 @@ export default function GroupsPage() {
       .then((rows) => {
         if (!mounted || !rows?.length) return;
         const hiddenIds = loadHiddenGroupIds();
-        setGroups(rows.filter((r) => !hiddenIds.has(String(r.id || r.apiId || ''))).map((r) => ({
+        const hiddenUserIds = (() => {
+          try { const raw = localStorage.getItem('newtra:hidden-user-ids'); return new Set<string>(raw ? JSON.parse(raw) : []); } catch { return new Set<string>(); }
+        })();
+        setGroups(rows.filter((r) => !hiddenIds.has(String(r.id || r.apiId || '')) && !hiddenUserIds.has(String(r.createdBy || ''))).map((r) => ({
           id: r.id || r.apiId,
           name: r.name,
           members: r.memberCount || 0,
@@ -213,7 +216,17 @@ export default function GroupsPage() {
       listRides({ page: '1', limit: '1000' }).catch(() => []),
     ]).then(([usersRows, ridesRows]) => {
       if (!mounted) return;
-      setApiUsers(Array.isArray(usersRows) ? usersRows : []);
+      const hiddenUserIds = (() => {
+        try { const raw = localStorage.getItem('newtra:hidden-user-ids'); return new Set<string>(raw ? JSON.parse(raw) : []); } catch { return new Set<string>(); }
+      })();
+      const activeUsers = Array.isArray(usersRows)
+        ? usersRows.filter((u) => {
+            const uid = String(u.id || u.apiId || '');
+            const isBlocked = String(u.status || '').toLowerCase() === 'blocked' || String(u.status || '').toLowerCase() === 'inactive';
+            return !hiddenUserIds.has(uid) && !isBlocked;
+          })
+        : [];
+      setApiUsers(activeUsers);
       setApiRides(Array.isArray(ridesRows) ? ridesRows : []);
     });
 

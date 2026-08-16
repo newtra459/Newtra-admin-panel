@@ -65,7 +65,7 @@ export default function TripsPage() {
       to: '—',
       dist: r.distance,
       dur: r.duration,
-      fare: fareLabel,
+      fare: r.accessMode === 'wallet' ? 'Wallet' : (r.subscriptionId ? 'Subscription' : '—'),
       date: r.date,
       status: r.status || 'completed',
       org: user?.orgName || '—',
