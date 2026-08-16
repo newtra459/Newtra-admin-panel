@@ -7,7 +7,37 @@ import { loadOperationalLocations, loadOperationalOrganizations } from '../../co
 import { loadFleetRows } from '../../utils/fleetSync';
 import { loadSubscriptionPlans } from '../../config/subscription-plans';
 import { isApiIntegrationEnabled } from '../../api/runtime';
+import { httpRequest } from '../../api/httpClient';
 import { listLocations } from '../../api/services/locationsService';
+
+const SETTINGS_B2B_NAME = '__admin_settings__';
+const SETTINGS_B2B_TYPE = '__settings__';
+
+async function loadHierarchyFromBackend(): Promise<{ id: string; data: Record<string, unknown> } | null> {
+  try {
+    const payload = await httpRequest({ method: 'GET', path: '/v1/b2b', query: { page: 1, limit: 200 } }) as Record<string, unknown>;
+    const rows: unknown[] = Array.isArray(payload) ? payload : Array.isArray((payload as Record<string, unknown>)?.data) ? (payload as Record<string, unknown>).data as unknown[] : [];
+    const entry = (rows as Array<Record<string, unknown>>).find((r) => r.name === SETTINGS_B2B_NAME && r.type === SETTINGS_B2B_TYPE);
+    if (!entry) return null;
+    try { return { id: String(entry.id || ''), data: JSON.parse(String(entry.description || '{}')) }; }
+    catch { return { id: String(entry.id || ''), data: {} }; }
+  } catch { return null; }
+}
+
+async function saveHierarchyToBackend(settingsId: string | null, data: Record<string, unknown>): Promise<string | null> {
+  const description = JSON.stringify(data);
+  if (settingsId) {
+    try {
+      await httpRequest({ method: 'PUT', path: '/v1/b2b', body: { id: settingsId, name: SETTINGS_B2B_NAME, description, type: SETTINGS_B2B_TYPE, is_active: true } });
+      return settingsId;
+    } catch { /* fall through to create */ }
+  }
+  try {
+    const res = await httpRequest({ method: 'POST', path: '/v1/b2b', body: { name: SETTINGS_B2B_NAME, description, type: SETTINGS_B2B_TYPE, is_active: true } }) as Record<string, unknown>;
+    const created = (res as Record<string, unknown>)?.data as Record<string, unknown>;
+    return created ? String(created.id || '') : null;
+  } catch { return null; }
+}
 
 const TABS = [
   { id: 'business', label: 'Business Types', icon: 'fa-briefcase', accent: '#00d4a0', category: 'Business Setup' },
@@ -426,6 +456,9 @@ export default function SettingsPage() {
   const [backendStations, setBackendStations] = useState([]);
   const [isBackendStationsLoading, setIsBackendStationsLoading] = useState(false);
   const [backendStationsError, setBackendStationsError] = useState('');
+  const [settingsBackendId, setSettingsBackendId] = useState<string | null>(null);
+  const [isSyncingSettings, setIsSyncingSettings] = useState(false);
+  const [settingsSyncLabel, setSettingsSyncLabel] = useState('');
 
   const bizTypes = businessTypes.filter((item) => item.status === 'active').map((item) => item.name);
   const orgTypes = organizationTypes.filter((item) => item.status === 'active').map((item) => item.name);
@@ -460,6 +493,24 @@ export default function SettingsPage() {
     setShowInvite(false);
   };
 
+  // Load hierarchy from backend once on mount (API mode only)
+  useEffect(() => {
+    if (!usingApi) return;
+    let mounted = true;
+    loadHierarchyFromBackend().then((result) => {
+      if (!mounted || !result) return;
+      setSettingsBackendId(result.id);
+      const d = result.data as Record<string, unknown>;
+      if (Array.isArray(d.businessTypes) && d.businessTypes.length)   setBusinessTypes(d.businessTypes as typeof businessTypes);
+      if (Array.isArray(d.organizationTypes) && d.organizationTypes.length) setOrganizationTypes(d.organizationTypes as typeof organizationTypes);
+      if (Array.isArray(d.userTypes) && d.userTypes.length)           setHierUserTypes(d.userTypes as typeof hierUserTypes);
+      if (Array.isArray(d.vehicleTypes) && d.vehicleTypes.length)     setVehicleTypes(d.vehicleTypes as typeof vehicleTypes);
+      if (Array.isArray(d.locations) && d.locations.length)           setLocations(d.locations as typeof locations);
+    });
+    return () => { mounted = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usingApi]);
+
   useEffect(() => {
     saveHierarchySettings({
       businessTypes,
@@ -467,6 +518,14 @@ export default function SettingsPage() {
       userTypes: hierUserTypes,
       vehicleTypes,
     });
+    // Also persist to backend (debounced via the save button approach is too slow;
+    // save automatically on every change so any browser always gets latest)
+    if (usingApi) {
+      const data = { businessTypes, organizationTypes, userTypes: hierUserTypes, vehicleTypes, locations };
+      saveHierarchyToBackend(settingsBackendId, data).then((id) => {
+        if (id && id !== settingsBackendId) setSettingsBackendId(id);
+      });
+    }
   }, [businessTypes, organizationTypes, hierUserTypes, vehicleTypes]);
 
   useEffect(() => {
@@ -475,6 +534,17 @@ export default function SettingsPage() {
 
   useEffect(() => {
     saveLocations(locations);
+    // Sync locations to backend together with the rest of hierarchy
+    if (usingApi) {
+      const data = { businessTypes, organizationTypes, userTypes: hierUserTypes, vehicleTypes, locations };
+      setIsSyncingSettings(true);
+      saveHierarchyToBackend(settingsBackendId, data).then((id) => {
+        if (id && id !== settingsBackendId) setSettingsBackendId(id);
+        setIsSyncingSettings(false);
+        setSettingsSyncLabel('Synced to cloud ✓');
+        setTimeout(() => setSettingsSyncLabel(''), 2500);
+      }).catch(() => { setIsSyncingSettings(false); });
+    }
   }, [locations]);
 
   useEffect(() => {
@@ -1635,8 +1705,13 @@ export default function SettingsPage() {
                   )}
                 </div>
               )}
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-2)', marginBottom: '8px' }}>
-                Build location hierarchy in order: Global to State to City to Station.
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-2)', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                <span>Build location hierarchy in order: Global to State to City to Station.</span>
+                {usingApi && (
+                  <span style={{ fontSize: '0.72rem', color: isSyncingSettings ? 'var(--text-3)' : 'var(--brand-2)', fontWeight: 600 }}>
+                    {isSyncingSettings ? <><i className="fa fa-spinner fa-spin" style={{ marginRight: '4px' }}></i>Syncing...</> : settingsSyncLabel || ''}
+                  </span>
+                )}
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '8px', marginBottom: '10px' }}>
                 {LOCATION_LEVEL_STEPS.map((step, index) => (

@@ -354,8 +354,12 @@ export default function OrganizationsPage() {
       try {
         const remoteRows = await listOrganizations({ page: 1, limit: 200 });
         if (!mounted) return;
-        if (Array.isArray(remoteRows) && remoteRows.length) {
-          const mapped = remoteRows.map((row) => mapApiOrganization(row, orgSettingsRef.current, businessSetupRef.current));
+        // Filter out the hidden settings carrier entry used by Settings page
+        const visibleRows = Array.isArray(remoteRows)
+          ? remoteRows.filter((row) => (row as Record<string, unknown>).name !== '__admin_settings__' && (row as Record<string, unknown>).type !== '__settings__')
+          : [];
+        if (visibleRows.length) {
+          const mapped = visibleRows.map((row) => mapApiOrganization(row, orgSettingsRef.current, businessSetupRef.current));
           setOrganizations(mapped);
           setOrganizationsMode('API');
         } else {
