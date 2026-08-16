@@ -443,6 +443,7 @@ export default function SettingsPage() {
   const [newOrgType, setNewOrgType] = useState({ businessTypeId: '', locationId: '', name: '', description: '' });
   const [newUserType, setNewUserType] = useState({ businessTypeId: '', organizationTypeId: '', name: '', description: '' });
   const [newVehicleType, setNewVehicleType] = useState({ name: '', seatCount: 1, driverApplicable: false, description: '' });
+  const [editingVehicleTypeId, setEditingVehicleTypeId] = useState<string | null>(null);
   const [orgName, setOrgName] = useState('MOS Mobility');
   const [supportEmail, setSupportEmail] = useState('support@mjollnir.io');
   const [platformUrl, setPlatformUrl] = useState('https://console.mjollnir.io');
@@ -932,11 +933,31 @@ export default function SettingsPage() {
       setHierarchyError('Vehicle Type name is required.');
       return;
     }
-    if (vehicleTypes.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
+    if (vehicleTypes.some((item) => item.name.toLowerCase() === name.toLowerCase() && item.id !== editingVehicleTypeId)) {
       setHierarchyError('Vehicle Type already exists.');
       return;
     }
     const seatCount = Math.max(1, Number(newVehicleType.seatCount) || 1);
+
+    if (editingVehicleTypeId) {
+      setVehicleTypes((prev) => prev.map((item) => (
+        item.id === editingVehicleTypeId
+          ? {
+              ...item,
+              name,
+              seatCount,
+              driverApplicable: Boolean(newVehicleType.driverApplicable),
+              description: newVehicleType.description.trim(),
+              updatedAt: new Date().toISOString(),
+            }
+          : item
+      )));
+      setEditingVehicleTypeId(null);
+      setNewVehicleType({ name: '', seatCount: 1, driverApplicable: false, description: '' });
+      setHierarchyError('');
+      return;
+    }
+
     const now = new Date().toISOString();
     setVehicleTypes((prev) => [...prev, {
       id: `vt-${now}`,
@@ -947,6 +968,25 @@ export default function SettingsPage() {
       status: 'active',
       createdAt: now,
     }]);
+    setNewVehicleType({ name: '', seatCount: 1, driverApplicable: false, description: '' });
+    setHierarchyError('');
+  };
+
+  const editVehicleType = (id) => {
+    const target = vehicleTypes.find((item) => item.id === id);
+    if (!target) return;
+    setEditingVehicleTypeId(id);
+    setNewVehicleType({
+      name: target.name,
+      seatCount: Number(target.seatCount) || 1,
+      driverApplicable: Boolean(target.driverApplicable),
+      description: target.description || '',
+    });
+    setHierarchyError('');
+  };
+
+  const cancelVehicleTypeEdit = () => {
+    setEditingVehicleTypeId(null);
     setNewVehicleType({ name: '', seatCount: 1, driverApplicable: false, description: '' });
     setHierarchyError('');
   };
@@ -1023,6 +1063,9 @@ export default function SettingsPage() {
     }
 
     setVehicleTypes((prev) => prev.filter((item) => item.id !== id));
+    if (editingVehicleTypeId === id) {
+      cancelVehicleTypeEdit();
+    }
     setHierarchyError('');
   };
 
@@ -2192,8 +2235,17 @@ export default function SettingsPage() {
                   value={newVehicleType.description}
                   onChange={(e) => { setNewVehicleType((prev) => ({ ...prev, description: e.target.value })); setHierarchyError(''); }}
                 />
-                <button type="button" className="btn-primary" onClick={createVehicleType}><i className="fa fa-plus"></i> Add</button>
+                <button type="button" className="btn-primary" onClick={createVehicleType}>
+                  <i className={`fa ${editingVehicleTypeId ? 'fa-save' : 'fa-plus'}`}></i> {editingVehicleTypeId ? 'Save' : 'Add'}
+                </button>
               </div>
+              {editingVehicleTypeId ? (
+                <div style={{ marginBottom: '10px' }}>
+                  <button type="button" className="btn-outline" onClick={cancelVehicleTypeEdit}>
+                    <i className="fa fa-times"></i> Cancel editing
+                  </button>
+                </div>
+              ) : null}
 
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
                 <span className="page-hero-chip"><i className="fa fa-layer-group"></i> {activeVehicleTypes.length} Active Types</span>
@@ -2215,6 +2267,7 @@ export default function SettingsPage() {
                       <span className="status completed">{item.seatCount} seats</span>
                       <span className={`status ${item.driverApplicable ? 'processing' : 'pending'}`}>{item.driverApplicable ? 'Driver' : 'Self Ride'}</span>
                       <span className={`status ${item.status === 'active' ? 'completed' : 'pending'}`}>{item.status}</span>
+                      <button type="button" className="act-btn" title="Edit" onClick={() => editVehicleType(item.id)}><i className="fa fa-pen"></i></button>
                       <button type="button" className="act-btn" title="Enable/Disable" onClick={() => toggleVehicleTypeStatus(item.id)}><i className="fa fa-power-off"></i></button>
                       <button type="button" className="act-btn red" title="Delete" onClick={() => deleteVehicleType(item.id)}><i className="fa fa-trash"></i></button>
                     </div>
