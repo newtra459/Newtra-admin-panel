@@ -17,7 +17,9 @@ async function loadHierarchyFromBackend(): Promise<{ id: string; data: Record<st
   try {
     const payload = await httpRequest({ method: 'GET', path: '/v1/b2b', query: { page: 1, limit: 200 } }) as Record<string, unknown>;
     const rows: unknown[] = Array.isArray(payload) ? payload : Array.isArray((payload as Record<string, unknown>)?.data) ? (payload as Record<string, unknown>).data as unknown[] : [];
-    const entry = (rows as Array<Record<string, unknown>>).find((r) => r.name === SETTINGS_B2B_NAME && r.type === SETTINGS_B2B_TYPE);
+    // Pick the entry with most data if multiple exist (dedup guard)
+    const entries = (rows as Array<Record<string, unknown>>).filter((r) => r.name === SETTINGS_B2B_NAME && r.type === SETTINGS_B2B_TYPE);
+    const entry = entries.sort((a, b) => String(b.description || '').length - String(a.description || '').length)[0];
     if (!entry) return null;
     try { return { id: String(entry.id || ''), data: JSON.parse(String(entry.description || '{}')) }; }
     catch { return { id: String(entry.id || ''), data: {} }; }
@@ -493,19 +495,35 @@ export default function SettingsPage() {
     setShowInvite(false);
   };
 
-  // Load hierarchy from backend once on mount (API mode only)
+  // Load hierarchy from backend once on mount (API mode only).
+  // Merge strategy: backend wins for entries that exist there; local-only entries
+  // (e.g. added in another tab before sync ran) are preserved and immediately
+  // written back so they become the new backend source of truth.
   useEffect(() => {
     if (!usingApi) return;
     let mounted = true;
     loadHierarchyFromBackend().then((result) => {
-      if (!mounted || !result) return;
+      if (!mounted) return;
+      if (!result) return;
       setSettingsBackendId(result.id);
       const d = result.data as Record<string, unknown>;
-      if (Array.isArray(d.businessTypes) && d.businessTypes.length)   setBusinessTypes(d.businessTypes as typeof businessTypes);
-      if (Array.isArray(d.organizationTypes) && d.organizationTypes.length) setOrganizationTypes(d.organizationTypes as typeof organizationTypes);
-      if (Array.isArray(d.userTypes) && d.userTypes.length)           setHierUserTypes(d.userTypes as typeof hierUserTypes);
-      if (Array.isArray(d.vehicleTypes) && d.vehicleTypes.length)     setVehicleTypes(d.vehicleTypes as typeof vehicleTypes);
-      if (Array.isArray(d.locations) && d.locations.length)           setLocations(d.locations as typeof locations);
+
+      // Helper: merge backend array with current local array, backend takes precedence
+      // for matching ids but local-only entries are kept.
+      const mergeById = <T extends { id: string }>(local: T[], remote: T[]) => {
+        if (!Array.isArray(remote) || remote.length === 0) return local;
+        const remoteIds = new Set(remote.map((x) => x.id));
+        const localOnly = local.filter((x) => !remoteIds.has(x.id));
+        return [...remote, ...localOnly];
+      };
+
+      // For locations, compare counts: if backend has ALL the entries local has, use backend.
+      // If local has more (user added entries not yet synced), merge them in then push back.
+      if (Array.isArray(d.businessTypes))   setBusinessTypes((prev) => mergeById(prev, d.businessTypes as typeof prev));
+      if (Array.isArray(d.organizationTypes)) setOrganizationTypes((prev) => mergeById(prev, d.organizationTypes as typeof prev));
+      if (Array.isArray(d.userTypes))       setHierUserTypes((prev) => mergeById(prev, d.userTypes as typeof prev));
+      if (Array.isArray(d.vehicleTypes))    setVehicleTypes((prev) => mergeById(prev, d.vehicleTypes as typeof prev));
+      if (Array.isArray(d.locations))       setLocations((prev) => mergeById(prev, d.locations as typeof prev));
     });
     return () => { mounted = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
